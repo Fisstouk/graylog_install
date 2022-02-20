@@ -1,10 +1,10 @@
-#!bin/bash
+#!/bin/bash
 #
 #Nom		: Script d'installation de Graylog
 #Description	: Installe et configure le serveur de log
 #Auteurs	: Mathis Thouvenin, Lyronn Levy, Simon Vener
-#Version	: 0.1
-#Date		: 10/02/2022
+#Version	: 0.2
+#Date		: 19/02/2022
 #
 #affiche les commandes effectuées
 #set -x
@@ -47,6 +47,38 @@ function install_elasticsearch()
 	wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
 	echo "deb https://artifacts.elastic.co/packages/oss-7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
 	apt update && sudo apt install elasticsearch-oss
+
+	#ajoute le nom du cluster
+	sed -i "s/#cluster.name: my-application/cluster.name: graylog/" /etc/elasticsearch/elasticsearch.yml
+
+	#un index ne sera pas créé automatiquement
+	echo "action.auto_create_index: false" >> /etc/elasticsearch/elasticsearch.yml
+
+	#modification des paramètres résau de elasticsearch
+	sed -i "s/#network.host: 192.168.0.1/network.host: 127.0.0.1/" /etc/elasticsearch/elasticsearch.yml
+
+	sed -i "s/#http.port: 9200/http.port: 9200/" /etc/elasticsearch/elasticsearch.yml
+
+	#modification de la taille de la heap: Xms, taille minimale, Xmx taille maximale
+	#les deux valeurs doivent être identiques
+	#modifier si l'erreur "There is insufficient memory for the Javva Runtinme Environment to continue" survient
+	#sed -i "s/-Xms1g/-Xms2g/" /etc/elasticsearch/jvm.options
+	#sed -i "s/-Xmx1g/-Xmx2g/" /etc/elasticsearch/jvm.options
+
+	#pallier à l'erreur timeout de elasticsearch
+	#elasticsearch provoque une erreur si le service ne démarre pas après 90s
+	#il faut augementer la durée de démarrage
+	#creation d'un dossier de gestion de durée dans systemd
+	#mkdir /etc/systemd/system/elasticsearch.service.d
+
+	#definit la nouvelle duree à 180s
+	#echo -e "[Service]\nTimeoutStartSec=180" | sudo tee /etc/systemd/system/elasticsearch.service.d/startup-timeout.conf	
+
+	#redemarre le service
+	#systemctl daemon-reload
+
+	#affiche si la nouvelle duree d'attente a été prise en compte
+	#systemctl show elasticsearch | grep ^Timeout
 }
 
 function start_elasticsearch()
@@ -60,12 +92,37 @@ function start_elasticsearch()
 function install_graylog()
 {
 	wget https://packages.graylog2.org/repo/packages/graylog-4.2-repository_latest.deb
+
 	#utilisation du gestionnaire de paquet dpkg pour installer le paquet avec l'option -i
 	dpkg -i graylog-4.2-repository_latest.deb
-	apt install graylog-server
+	apt update -y
+	apt install graylog-server -y
 
 	#créer le root_password_sha2
-	echo 'aze\!123' && head -1 </dev/stdin | tr -d '\n' | sha256sum | cut -d" " -f1
+	root_password=$(echo 'admin' && head -1 </dev/stdin | tr -d '\n' | sha256sum | cut -d" " -f1)
+
+	#simule la touche entrée
+	echo -e "\n"
+
+	#retire les 6 premiers caractères de la commande précédente
+	#donc on retire 'admin '
+	root_password=${root_password:6}
+
+	#ajoute le root_password hashé dans /etc/graylog/server/server.conf
+	sed -i "s/root_password_sha2 =/root_password_sha2 = $root_password/" /etc/graylog/server/server.conf
+	
+	#installation du generateur de mdp pwgen
+	apt install pwgen
+
+	#generation d'un mdp hashé avec pwgen
+	password_secret=$(pwgen -N 1 -s 96)
+
+	#ajoute le mdp généré précédemment dans le ficher /etc/graylog/server/server.conf
+	sed -i "s/password_secret =/password_secret = $password_secret/" /etc/graylog/server/server.conf
+
+	#ajoute l'adresse IP du serveur
+	sed -i "s/#http_bind_address = 127.0.0.1:9000/http_bind_address = 192.168.1.20:9000/" /etc/graylog/server/server.conf
+
 }
 
 function start_graylog()
@@ -77,23 +134,31 @@ function start_graylog()
 }
 
 
-echo('Mise à jour du système')
+echo "Mise à jour du système"
 debian_update
 
-echo('Installation de paquets Debian')
+echo "Installation de paquets Debian" 
 basic_packets
 
-echo('Installation de MongoDB')
+echo "Installation de MongoDB"
 install_mongodb
 
-echo('Lancement de MongoDB')
+echo "Lancement de MongoDB"
 start_mongodb
 
-echo('Installation de ElasticSearch')
+echo "Installation de ElasticSearch"
 install_elasticsearch
 
-echo('Lancement de ElasticSearch')
+echo "Lancement de ElasticSearch"
 start_elasticsearch
 
-echo('Installation de Graylog')
+echo "Installation de Graylog"
 install_graylog
+
+echo "Lancement de Graylog"
+start_graylog
+
+echo "Redémarrer MongoDB, ElasticSearch et Graylog"
+start_mongodb
+start_elasticsearch
+start_graylog
