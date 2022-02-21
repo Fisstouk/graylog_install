@@ -3,8 +3,10 @@
 #Nom		: Script d'installation de Graylog
 #Description	: Installe et configure le serveur de log
 #Auteurs	: Mathis Thouvenin, Lyronn Levy, Simon Vener
-#Version	: 0.2
-#Date		: 19/02/2022
+#Version	: 1.0
+#Date		: 20/02/2022
+#
+#A la fin de ce script, lancer un reboot et le script graylog_after_reboot
 #
 #affiche les commandes effectuées
 #set -x
@@ -98,15 +100,18 @@ function install_graylog()
 	apt update -y
 	apt install graylog-server -y
 
+	#decommente le nom du user root
+	sed -i "s/#root_username = admin/root_username = admin/" /etc/graylog/server/server.conf
+
 	#créer le root_password_sha2
-	root_password=$(echo 'admin' && head -1 </dev/stdin | tr -d '\n' | sha256sum | cut -d" " -f1)
+	root_password=$(echo -n "admin" | shasum -a 256 | cut -d" " -f1)
 
 	#simule la touche entrée
 	echo -e "\n"
 
 	#retire les 6 premiers caractères de la commande précédente
 	#donc on retire 'admin '
-	root_password=${root_password:6}
+	#root_password=${root_password:6}
 
 	#ajoute le root_password hashé dans /etc/graylog/server/server.conf
 	sed -i "s/root_password_sha2 =/root_password_sha2 = $root_password/" /etc/graylog/server/server.conf
@@ -133,6 +138,7 @@ function start_graylog()
 	systemctl --type=service --state=active | grep graylog
 }
 
+clear
 
 echo "Mise à jour du système"
 debian_update
@@ -162,3 +168,4 @@ echo "Redémarrer MongoDB, ElasticSearch et Graylog"
 start_mongodb
 start_elasticsearch
 start_graylog
+
